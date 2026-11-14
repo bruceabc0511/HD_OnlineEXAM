@@ -2603,9 +2603,23 @@ function handleCreateNewExamPaper() {
   showToast(`➕ 已建立新試卷「${title}」！您可直接開始新增考題或自左側匯入 Excel。`);
 }
 
+function isExamLockedForEditing(exam) {
+  const target = exam || getCurrentSelectedExam();
+  return Boolean(target && examData && examData.isExamOpen && examData.id === target.id);
+}
+
+function guardActiveExamEditing(exam, actionLabel = '異動此試卷') {
+  if (!isExamLockedForEditing(exam)) return false;
+  const target = exam || getCurrentSelectedExam();
+  const title = (target && target.title) ? target.title : (examData.title || '當前試卷');
+  alert(`⛔ 試卷「${title}」正在測驗進行中！\n\n測驗進行中的試卷禁止${actionLabel}。\n請先於上方控制列點擊「結束作答」後再進行修改。`);
+  return true;
+}
+
 function handleRenameExamPaper() {
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
+  if (guardActiveExamEditing(currentExam, '重新命名')) return;
   const newTitle = prompt('請輸入此份試卷的新名稱：', currentExam.title || '');
   if (newTitle === null) return;
   const trimmed = newTitle.trim();
@@ -2713,6 +2727,12 @@ function setupExamMetaAutoSync() {
   const syncMetaFromInputs = (pushCloud = false) => {
     const currentExam = getCurrentSelectedExam();
     if (!currentExam) return;
+    if (isExamLockedForEditing(currentExam)) {
+      if (titleInput) titleInput.value = currentExam.title ?? '';
+      if (dateInput) dateInput.value = normalizeDateForInput(currentExam.examDate ?? '');
+      if (durationInput) durationInput.value = currentExam.durationMinutes === '' ? '' : (currentExam.durationMinutes ?? 60);
+      return;
+    }
     if (titleInput) currentExam.title = titleInput.value.trim();
     if (dateInput) currentExam.examDate = normalizeDateForInput(dateInput.value);
     if (durationInput) {
@@ -2725,7 +2745,7 @@ function setupExamMetaAutoSync() {
     const libSelect = document.getElementById('examLibrarySelect');
     if (libSelect && libSelect.selectedOptions && libSelect.selectedOptions[0]) {
       const isActive = examData && examData.id === currentExam.id;
-      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢測驗進行中]' : ' [📍當前試卷]') : '';
+      const statusMark = isActive ? (examData.isExamOpen ? '　【🟢測驗進行中】' : '　【📍當前試卷】') : '';
       libSelect.selectedOptions[0].textContent = `${currentExam.title || '未命名試卷'} (${(currentExam.questions || []).length} 題)${statusMark}`;
     }
 
@@ -2757,7 +2777,7 @@ function renderExaminerQuestionTab() {
       const opt = document.createElement('option');
       opt.value = exam.id;
       const isActive = examData && examData.id === exam.id;
-      const statusMark = isActive ? (examData.isExamOpen ? ' [🟢測驗進行中]' : ' [📍當前試卷]') : '';
+      const statusMark = isActive ? (examData.isExamOpen ? '　【🟢測驗進行中】' : '　【📍當前試卷】') : '';
       opt.textContent = `${exam.title || '未命名試卷'} (${(exam.questions || []).length} 題)${statusMark}`;
       libSelect.appendChild(opt);
     });
@@ -2788,6 +2808,18 @@ function renderExaminerQuestionTab() {
   }
   if (durationInput && document.activeElement !== durationInput) {
     durationInput.value = currentExam.durationMinutes === '' ? '' : (currentExam.durationMinutes ?? 60);
+  }
+
+  const isLocked = isExamLockedForEditing(currentExam);
+  [titleInput, dateInput, durationInput].forEach(el => {
+    if (!el) return;
+    el.disabled = isLocked;
+    el.classList.toggle('input-locked', isLocked);
+  });
+  const metaSubmitBtn = document.querySelector('#examMetaForm button[type="submit"]');
+  if (metaSubmitBtn) {
+    metaSubmitBtn.disabled = isLocked;
+    metaSubmitBtn.title = isLocked ? '測驗進行中，禁止修改試卷資訊' : '';
   }
 
   document.getElementById('metaValidQCount').textContent = qCount;
@@ -2834,6 +2866,7 @@ function saveExamMetadata(event) {
   event.preventDefault();
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
+  if (guardActiveExamEditing(currentExam, '修改試卷資訊（名稱、日期、作答時間）')) return;
 
   currentExam.title = document.getElementById('metaExamTitle').value.trim();
   currentExam.examDate = normalizeDateForInput(document.getElementById('metaExamDate').value.trim());
@@ -2856,6 +2889,7 @@ function saveExamMetadata(event) {
 function deleteQuestion(qId) {
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
+  if (guardActiveExamEditing(currentExam, '刪除題目')) return;
   const targetQ = currentExam.questions.find(q => q.id === qId);
   const qPreview = targetQ && targetQ.question ? `\n\n題目：${targetQ.question}` : '';
   if (!confirm(`確定要刪除第 ${qId} 題嗎？${qPreview}`)) return;
@@ -2881,6 +2915,7 @@ function deleteQuestion(qId) {
 function clearAllQuestions() {
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
+  if (guardActiveExamEditing(currentExam, '清空全部題目')) return;
   const hasQuestions = (currentExam.questions || []).length > 0;
   if (!hasQuestions) return;
   if (!confirm(`確定要清空試卷「${currentExam.title}」中的所有考題嗎？`)) return;
@@ -2933,6 +2968,8 @@ function syncAnswerSelectWithOptions(preferredAnswer) {
 }
 
 function openAddQuestionModal() {
+  const currentExam = getCurrentSelectedExam();
+  if (guardActiveExamEditing(currentExam, '新增題目')) return;
   editingQuestionId = null;
   document.getElementById('addQuestionForm').reset();
   const titleEl = document.getElementById('questionModalTitle');
@@ -2946,6 +2983,7 @@ function openAddQuestionModal() {
 
 function openEditQuestionModal(qId) {
   const currentExam = getCurrentSelectedExam();
+  if (guardActiveExamEditing(currentExam, '編輯題目內容')) return;
   const targetQ = (currentExam ? currentExam.questions : examData.questions).find(q => q.id === qId);
   if (!targetQ) return;
 
@@ -3147,6 +3185,10 @@ function handleSaveNewQuestion(event) {
   event.preventDefault();
   const currentExam = getCurrentSelectedExam();
   if (!currentExam) return;
+  if (guardActiveExamEditing(currentExam, editingQuestionId !== null ? '編輯題目內容' : '新增題目')) {
+    closeAddQuestionModal();
+    return;
+  }
 
   const qText = document.getElementById('newQText').value.trim();
   const rawOpts = document.getElementById('newQOptions').value.trim();
@@ -3349,6 +3391,7 @@ function parseTemplateRows(rows, fileName) {
     );
 
     if (shouldOverwrite) {
+      if (guardActiveExamEditing(existingExam, '匯入覆蓋題目')) return;
       if (examData.id === existingExam.id && submissions.length > 0) {
         const shouldArchive = confirm(
           `提醒：當前場次已有 ${submissions.length} 位考生的交卷成績！\n\n是否先將當前場次的考生成績封存為「歷次測驗紀錄」並清空當前名單？`
